@@ -6,11 +6,9 @@ WORKDIR /usr/src/app
 
 # Copy files
 COPY requirements.txt ./
-COPY config ./config
-COPY xion.py .
 
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Run the script
-CMD ["python", "-u", "./xion.py"]
+CMD ["python", "-u", "./main.py"]
