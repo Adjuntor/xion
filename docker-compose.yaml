@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  xion:
+    build: .
+    container_name: xion
+    restart: unless-stopped
+
+    volumes:
+      - ./config:/app/config
+
+    environment:
+      - PYTHONUNBUFFERED=1
