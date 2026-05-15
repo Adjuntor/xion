@@ -38,5 +38,5 @@ jobs:
             linux/amd64
             linux/arm64
           tags: |
-            ghcr.io/adjuntor/shiva:latest
-            ghcr.io/adjuntor/shiva:${{ github.sha }}
+            ghcr.io/adjuntor/xion:latest
+            ghcr.io/adjuntor/xion:${{ github.sha }}
