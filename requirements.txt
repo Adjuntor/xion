@@ -1,2 +1,2 @@
-aiohttp==3.9.4
-feedparser==6.0.10
+aiohttp>=3.9.4
+feedparser>=6.0.10
