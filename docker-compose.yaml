@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
 
     volumes:
-      - ./config:/app/config
+      - ./config:/usr/src/app/config
 
     environment:
       - PYTHONUNBUFFERED=1
