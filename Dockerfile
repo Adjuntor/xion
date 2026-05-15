@@ -2,10 +2,10 @@
 FROM python:alpine
 
 # Set working directory
-WORKDIR /app
+WORKDIR /usr/src/app
 
 # Copy files
-COPY requirements.txt .
+COPY requirements.txt ./
 COPY config ./config
 COPY xion.py .
 
@@ -13,4 +13,4 @@ COPY xion.py .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Run the script
-CMD ["python", "xion.py"]
+CMD ["python", "-u", "./xion.py"]
