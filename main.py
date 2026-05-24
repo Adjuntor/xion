@@ -83,46 +83,46 @@ class Xion:
     # =========================================================
 
     def normalize_link(self, link: str) -> str:
-    """
-    Normalize links to avoid duplicates:
-    - force https
-    - remove query params
-    - remove fragments
-    - remove trailing slash
-    - lowercase hostname
-    - remove www
-    - convert twitter/x -> fxtwitter
-    """
+        """
+        Normalize links to avoid duplicates:
+        - force https
+        - remove query params
+        - remove fragments
+        - remove trailing slash
+        - lowercase hostname
+        - remove www
+        - convert twitter/x -> fxtwitter
+        """
 
-    if not link:
-        return ""
+        if not link:
+            return ""
 
-    try:
-        parsed = urlparse(link.strip())
+        try:
+            parsed = urlparse(link.strip())
 
-        netloc = parsed.netloc.lower()
+            netloc = parsed.netloc.lower()
 
-        # remove www
-        if netloc.startswith("www."):
-            netloc = netloc[4:]
+            # Remove www
+            if netloc.startswith("www."):
+                netloc = netloc[4:]
 
-        # convert domains safely
-        if netloc in ("x.com", "twitter.com"):
-            netloc = "fxtwitter.com"
+            # Convert Twitter/X safely
+            if netloc in ("x.com", "twitter.com"):
+                netloc = "fxtwitter.com"
 
-        cleaned = parsed._replace(
-            scheme="https",
-            netloc=netloc,
-            query="",
-            fragment=""
-        )
+            cleaned = parsed._replace(
+                scheme="https",
+                netloc=netloc,
+                query="",
+                fragment=""
+            )
 
-        fixed = urlunparse(cleaned)
+            fixed = urlunparse(cleaned)
 
-        return fixed.rstrip("/")
+            return fixed.rstrip("/")
 
-    except Exception:
-        return link.rstrip("/")
+        except Exception:
+            return link.rstrip("/")
 
     def get_entry_identifier(self, entry):
         """
@@ -293,6 +293,7 @@ class Xion:
                 skipped_seen += 1
                 continue
 
+            # Normalize outgoing link too
             link = self.normalize_link(raw_link)
 
             print(f"[NEW] Found new article: {link}")
