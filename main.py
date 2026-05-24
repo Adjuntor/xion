@@ -83,46 +83,46 @@ class Xion:
     # =========================================================
 
     def normalize_link(self, link: str) -> str:
-        """
-        Normalize links to avoid duplicates:
-        - force https
-        - remove query params
-        - remove fragments
-        - remove trailing slash
-        - lowercase hostname
-        - remove www
-        - convert twitter/x -> fxtwitter
-        """
+    """
+    Normalize links to avoid duplicates:
+    - force https
+    - remove query params
+    - remove fragments
+    - remove trailing slash
+    - lowercase hostname
+    - remove www
+    - convert twitter/x -> fxtwitter
+    """
 
-        if not link:
-            return ""
+    if not link:
+        return ""
 
-        try:
-            parsed = urlparse(link.strip())
+    try:
+        parsed = urlparse(link.strip())
 
-            netloc = parsed.netloc.lower()
+        netloc = parsed.netloc.lower()
 
-            if netloc.startswith("www."):
-                netloc = netloc[4:]
+        # remove www
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
 
-            cleaned = parsed._replace(
-                scheme="https",
-                netloc=netloc,
-                query="",
-                fragment=""
-            )
+        # convert domains safely
+        if netloc in ("x.com", "twitter.com"):
+            netloc = "fxtwitter.com"
 
-            fixed = urlunparse(cleaned)
+        cleaned = parsed._replace(
+            scheme="https",
+            netloc=netloc,
+            query="",
+            fragment=""
+        )
 
-            fixed = (
-                fixed.replace("x.com", "fxtwitter.com")
-                     .replace("twitter.com", "fxtwitter.com")
-            )
+        fixed = urlunparse(cleaned)
 
-            return fixed.rstrip("/")
+        return fixed.rstrip("/")
 
-        except Exception:
-            return link.rstrip("/")
+    except Exception:
+        return link.rstrip("/")
 
     def get_entry_identifier(self, entry):
         """
