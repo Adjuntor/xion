@@ -268,83 +268,100 @@ class Xion:
 
     async def process_feed(self, session, rss_feed):
 
-        url = rss_feed["url"]
-        webhook_url = rss_feed["webhook"]
+    url = rss_feed["url"]
+    webhook_url = rss_feed["webhook"]
 
-        print(f"[PROCESS] Processing feed: {url}")
+    print(f"[PROCESS] Processing feed: {url}")
 
-        feed = await self.fetch_feed(session, url)
+    feed = await self.fetch_feed(session, url)
 
-        if not feed:
+    if not feed:
 
-            print(f"[PROCESS] Feed failed: {url}")
+        print(f"[PROCESS] Feed failed: {url}")
 
-            return []
+        return []
 
-        results = []
+    results = []
 
-        total = 0
-        skipped_seen = 0
-        skipped_old = 0
+    total = 0
+    skipped_seen = 0
+    skipped_old = 0
+    skipped_undefined = 0
 
-        # Sort newest first
-        entries = sorted(
-            feed.entries,
-            key=lambda e: self.get_entry_date(e) or (0,),
-            reverse=True
-        )[:20]
+    # Sort newest first
+    entries = sorted(
+        feed.entries,
+        key=lambda e: self.get_entry_date(e) or (0,),
+        reverse=True
+    )[:20]
 
-        for entry in entries:
+    for entry in entries:
 
-            total += 1
+        total += 1
 
-            raw_link = entry.get("link")
+        raw_link = entry.get("link")
 
-            if not raw_link:
-                continue
+        if not raw_link:
+            continue
 
-            link = self.normalize_link(raw_link)
+        link = self.normalize_link(raw_link)
 
-            if not link:
-                continue
+        if not link:
+            continue
 
-            identifier = self.get_entry_identifier(entry)
+        # Ignore posts from user "undefined"
+        author = (
+            entry.get("author")
+            or entry.get("creator")
+            or ""
+        ).strip().lower()
 
-            # Validate timestamp
-            published = self.get_entry_date(entry)
+        if author == "undefined":
 
-            if not self.is_recent(published):
+            skipped_undefined += 1
 
-                skipped_old += 1
-                continue
+            print(f"[FILTER] Ignoring undefined author: {link}")
 
-            # Check duplicate
-            already_seen = await self.is_seen(identifier)
+            continue
 
-            if already_seen:
+        identifier = self.get_entry_identifier(entry)
 
-                skipped_seen += 1
-                continue
+        # Validate timestamp
+        published = self.get_entry_date(entry)
 
-            print(f"[NEW] Found new article: {link}")
+        if not self.is_recent(published):
 
-            results.append(
-                (
-                    webhook_url,
-                    link,
-                    identifier
-                )
+            skipped_old += 1
+            continue
+
+        # Check duplicate
+        already_seen = await self.is_seen(identifier)
+
+        if already_seen:
+
+            skipped_seen += 1
+            continue
+
+        print(f"[NEW] Found new article: {link}")
+
+        results.append(
+            (
+                webhook_url,
+                link,
+                identifier
             )
-
-        print(
-            f"[SUMMARY] {url} → "
-            f"total={total}, "
-            f"new={len(results)}, "
-            f"seen_skip={skipped_seen}, "
-            f"old_skip={skipped_old}"
         )
 
-        return results
+    print(
+        f"[SUMMARY] {url} → "
+        f"total={total}, "
+        f"new={len(results)}, "
+        f"seen_skip={skipped_seen}, "
+        f"old_skip={skipped_old}, "
+        f"undefined_skip={skipped_undefined}"
+    )
+
+    return results
 
     # =========================================================
     # SEND WEBHOOK
