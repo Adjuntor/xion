@@ -309,20 +309,34 @@ class Xion:
         if not link:
             continue
 
+        # =====================================================
         # Ignore posts from user "undefined"
+        # =====================================================
+
         author = (
             entry.get("author")
             or entry.get("creator")
             or ""
         ).strip().lower()
 
-        if author == "undefined":
+        parsed_link = urlparse(link)
+
+        path_parts = parsed_link.path.strip("/").split("/")
+
+        username = (
+            path_parts[0].lower()
+            if path_parts else ""
+        )
+
+        if author == "undefined" or username == "undefined":
 
             skipped_undefined += 1
 
-            print(f"[FILTER] Ignoring undefined author: {link}")
+            print(f"[FILTER] Ignoring undefined user post: {link}")
 
             continue
+
+        # =====================================================
 
         identifier = self.get_entry_identifier(entry)
 
