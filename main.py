@@ -13,7 +13,9 @@ CACHE_FILE = "config/seen_articles.json"
 
 
 class Xion:
+
     def __init__(self):
+
         # Fast lookup
         self.seen_links = set()
 
@@ -26,7 +28,9 @@ class Xion:
         self._seen_lock = asyncio.Lock()
 
         print("[INIT] Starting Xion RSS Webhook bot...")
+
         self.load_cache()
+
         print(f"[INIT] Loaded {len(self.seen_links)} cached links")
 
     # =========================================================
@@ -34,9 +38,11 @@ class Xion:
     # =========================================================
 
     def load_cache(self):
+
         print("[CACHE] Loading cache file...")
 
         if os.path.exists(CACHE_FILE):
+
             try:
                 with open(CACHE_FILE, "r") as f:
                     links = json.load(f)
@@ -56,7 +62,9 @@ class Xion:
                 print(f"[CACHE] Loaded {len(self.seen_links)} seen links")
 
             except Exception as e:
+
                 print(f"[CACHE] Failed to load cache: {e}")
+
                 self.seen_links = set()
                 self.seen_order = []
 
@@ -64,9 +72,11 @@ class Xion:
             print("[CACHE] No cache file found, starting fresh")
 
     def save_cache(self):
+
         trimmed_order = self.seen_order[-config.MAX_CACHE_SIZE:]
 
         try:
+
             with open(CACHE_FILE, "w") as f:
                 json.dump(trimmed_order, f)
 
@@ -84,59 +94,61 @@ class Xion:
 
     def normalize_link(self, link: str) -> str:
         """
-        Normalize links to avoid duplicates:
+        Normalize links:
         - force https
         - remove query params
         - remove fragments
         - remove trailing slash
         - lowercase hostname
-        - remove www
-        - convert twitter/x -> fxtwitter
+        - remove www/mobile
+        - normalize twitter/x URLs
         """
 
         if not link:
             return ""
 
         try:
+
             parsed = urlparse(link.strip())
 
             netloc = parsed.netloc.lower()
 
-            # Remove www
-            if netloc.startswith("www."):
-                netloc = netloc[4:]
+            # Remove prefixes
+            for prefix in ("www.", "mobile."):
 
-            # Convert Twitter/X safely
+                if netloc.startswith(prefix):
+                    netloc = netloc[len(prefix):]
+
+            path = parsed.path.rstrip("/")
+
+            # Normalize Twitter/X links
             if netloc in ("x.com", "twitter.com"):
+
+                # Normalize weird Twitter paths
+                path = path.replace("/i/web/status/", "/status/")
+
                 netloc = "fxtwitter.com"
 
             cleaned = parsed._replace(
                 scheme="https",
                 netloc=netloc,
+                path=path,
                 query="",
                 fragment=""
             )
 
-            fixed = urlunparse(cleaned)
-
-            return fixed.rstrip("/")
+            return urlunparse(cleaned)
 
         except Exception:
-            return link.rstrip("/")
+            return link.strip().rstrip("/")
 
     def get_entry_identifier(self, entry):
         """
-        Prefer stable RSS GUID/id.
-        Fallback to link.
+        Always use normalized link as stable identifier.
+        RSS GUIDs are often inconsistent.
         """
 
-        raw = (
-            entry.get("id")
-            or entry.get("guid")
-            or entry.get("link")
-        )
-
-        return self.normalize_link(raw)
+        return self.normalize_link(entry.get("link", ""))
 
     def get_entry_date(self, entry):
         """
@@ -150,17 +162,20 @@ class Xion:
         )
 
     def is_recent(self, published_parsed) -> bool:
+
         if not published_parsed:
             print("[FILTER] Missing publish date → rejected")
             return False
 
         try:
+
             published = datetime(
                 *published_parsed[:6],
                 tzinfo=timezone.utc
             )
 
         except Exception as e:
+
             print(f"[FILTER] Invalid publish date: {e}")
             return False
 
@@ -168,6 +183,7 @@ class Xion:
 
         # Reject future timestamps
         if published > now + timedelta(minutes=5):
+
             print(f"[FILTER] Future article rejected ({published})")
             return False
 
@@ -177,25 +193,24 @@ class Xion:
             return True
 
         print(f"[FILTER] Old article rejected (age: {age})")
+
         return False
 
     # =========================================================
     # SEEN TRACKING
     # =========================================================
 
-    async def try_mark_seen(self, identifier):
-        """
-        Atomically:
-        - check if seen
-        - mark as seen
+    async def is_seen(self, identifier):
 
-        Prevents race conditions between feeds.
-        """
+        async with self._seen_lock:
+            return identifier in self.seen_links
+
+    async def mark_seen(self, identifier):
 
         async with self._seen_lock:
 
             if identifier in self.seen_links:
-                return False
+                return
 
             self.seen_links.add(identifier)
             self.seen_order.append(identifier)
@@ -204,16 +219,17 @@ class Xion:
 
             # Trim oldest entries
             while len(self.seen_order) > config.MAX_CACHE_SIZE:
-                oldest = self.seen_order.pop(0)
-                self.seen_links.discard(oldest)
 
-            return True
+                oldest = self.seen_order.pop(0)
+
+                self.seen_links.discard(oldest)
 
     # =========================================================
     # FETCH FEED
     # =========================================================
 
     async def fetch_feed(self, session, feed_url):
+
         print(f"[FETCH] Downloading RSS feed: {feed_url}")
 
         headers = {
@@ -221,6 +237,7 @@ class Xion:
         }
 
         try:
+
             async with session.get(
                 feed_url,
                 headers=headers,
@@ -228,7 +245,9 @@ class Xion:
             ) as resp:
 
                 if resp.status != 200:
+
                     print(f"[FETCH] HTTP {resp.status}")
+
                     return None
 
                 text = await resp.text()
@@ -238,7 +257,9 @@ class Xion:
                 return feedparser.parse(text)
 
         except Exception as e:
+
             print(f"[ERROR] Failed to fetch feed {feed_url}: {e}")
+
             return None
 
     # =========================================================
@@ -246,6 +267,7 @@ class Xion:
     # =========================================================
 
     async def process_feed(self, session, rss_feed):
+
         url = rss_feed["url"]
         webhook_url = rss_feed["webhook"]
 
@@ -254,7 +276,9 @@ class Xion:
         feed = await self.fetch_feed(session, url)
 
         if not feed:
+
             print(f"[PROCESS] Feed failed: {url}")
+
             return []
 
         results = []
@@ -263,10 +287,15 @@ class Xion:
         skipped_seen = 0
         skipped_old = 0
 
-        # Process newest entries only
-        entries = feed.entries[:20]
+        # Sort newest first
+        entries = sorted(
+            feed.entries,
+            key=lambda e: self.get_entry_date(e) or (0,),
+            reverse=True
+        )[:20]
 
         for entry in entries:
+
             total += 1
 
             raw_link = entry.get("link")
@@ -274,27 +303,28 @@ class Xion:
             if not raw_link:
                 continue
 
-            identifier = self.get_entry_identifier(entry)
+            link = self.normalize_link(raw_link)
 
-            if not identifier:
+            if not link:
                 continue
+
+            identifier = self.get_entry_identifier(entry)
 
             # Validate timestamp
             published = self.get_entry_date(entry)
 
             if not self.is_recent(published):
+
                 skipped_old += 1
                 continue
 
-            # Atomic dedupe
-            was_new = await self.try_mark_seen(identifier)
+            # Check duplicate
+            already_seen = await self.is_seen(identifier)
 
-            if not was_new:
+            if already_seen:
+
                 skipped_seen += 1
                 continue
-
-            # Normalize outgoing link too
-            link = self.normalize_link(raw_link)
 
             print(f"[NEW] Found new article: {link}")
 
@@ -302,6 +332,7 @@ class Xion:
                 (
                     webhook_url,
                     link,
+                    identifier
                 )
             )
 
@@ -320,9 +351,11 @@ class Xion:
     # =========================================================
 
     async def send_webhook(self, session, webhook_url, content):
+
         print(f"[SEND] Sending to webhook: {content}")
 
         try:
+
             async with session.post(
                 webhook_url,
                 json={"content": content},
@@ -330,7 +363,9 @@ class Xion:
             ) as resp:
 
                 if resp.status in (200, 204):
+
                     print("[SEND] Success")
+
                     return True
 
                 text = await resp.text()
@@ -340,7 +375,9 @@ class Xion:
                 return False
 
         except Exception as e:
+
             print(f"[ERROR] Webhook error: {e}")
+
             return False
 
     # =========================================================
@@ -348,9 +385,11 @@ class Xion:
     # =========================================================
 
     async def run(self):
+
         print("[RUN] RSS loop started")
 
         while True:
+
             start = datetime.now()
 
             print("\n==============================")
@@ -376,7 +415,7 @@ class Xion:
 
                 print(f"[CYCLE] Total new messages: {len(messages)}")
 
-                for webhook_url, link in messages:
+                for webhook_url, link, identifier in messages:
 
                     success = await self.send_webhook(
                         session,
@@ -384,13 +423,21 @@ class Xion:
                         link
                     )
 
-                    if not success:
+                    if success:
+
+                        await self.mark_seen(identifier)
+
+                    else:
+
                         print(f"[WARN] Failed to send: {link}")
 
                 # Save cache after cycle
                 if self._dirty:
+
                     self.save_cache()
+
                     self._dirty = False
+
                 else:
                     print("[CACHE] No changes, skipping save")
 
@@ -405,5 +452,7 @@ class Xion:
 
 
 if __name__ == "__main__":
+
     bot = Xion()
+
     asyncio.run(bot.run())
