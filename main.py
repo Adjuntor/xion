@@ -410,12 +410,69 @@ class Xion:
             print(f"[ERROR] Webhook error: {e}")
 
             return False
+            
+    # =========================================================
+    # DAILY WEBHOOK SCHEDULER
+    # =========================================================
 
+    async def daily_webhook_loop(self):
+
+        print("[DAILY] Scheduler started")
+
+        while True:
+
+            now = datetime.now()
+
+            next_run = now.replace(
+                hour=12,
+                minute=0,
+                second=0,
+                microsecond=0
+            )
+
+            if now >= next_run:
+                next_run += timedelta(days=1)
+
+            sleep_time = (next_run - now).total_seconds()
+
+            print(
+                f"[DAILY] Next run: "
+                f"{next_run.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+
+            await asyncio.sleep(sleep_time)
+
+            try:
+
+                async with aiohttp.ClientSession() as session:
+
+                    message = (
+                        f"{config.DAILY_MESSAGE}\n"
+                        f"Date: {datetime.now().strftime('%Y-%m-%d')}"
+                    )
+
+                    success = await self.send_webhook(
+                        session,
+                        config.DAILY_WEBHOOK_URL,
+                        message
+                    )
+
+                    if success:
+                        print("[DAILY] Message sent")
+
+                    else:
+                        print("[DAILY] Message failed")
+
+            except Exception as e:
+
+                print(f"[DAILY] Error: {e}")
+
+    
     # =========================================================
     # MAIN LOOP
     # =========================================================
 
-    async def run(self):
+    async def rss_loop(self):
 
         print("[RUN] RSS loop started")
 
@@ -480,6 +537,19 @@ class Xion:
             print(f"[SLEEP] Sleeping for {sleep_time}s...\n")
 
             await asyncio.sleep(sleep_time)
+
+    # =========================================================
+    # START TASKS
+    # =========================================================
+
+    async def run(self):
+
+        print("[RUN] Starting tasks")
+
+        await asyncio.gather(
+            self.rss_loop(),
+            self.daily_webhook_loop()
+        )
 
 
 if __name__ == "__main__":
