@@ -424,10 +424,10 @@ class Xion:
             now = datetime.now()
 
             next_run = now.replace(
-                hour=12,
-                minute=0,
-                second=0,
-                microsecond=0
+                hour=config.DAILY_HOUR,
+                minute=config.DAILY_MINUTE,
+                second=config.DAILY_SECOND,
+                microsecond=config.DAILY_MICROSECOND
             )
 
             if now >= next_run:
