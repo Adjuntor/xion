@@ -1,6 +1,8 @@
+# Update interval for how often the bot is supposed to check if a new entry in the RSS feed exists (in Seconds)
 RSS_UPDATE_INTERVAL = 60  # seconds
+# How far a new entry in the RSS feed can can be published in the past before being ignored (in Days)
 RSS_LAST_ARTICLE_RANGE = 7  # days
-MAX_CACHE_SIZE = 5000 # Maximum number of links to store
+MAX_CACHE_SIZE = 10000 # Maximum number of links to store
 
 DAILY_WEBHOOK_URL = "https://discord.com/api/webhooks/159999999999999928/asdasdgffhggdfhertsdzxvretwsvfxcrhvcxrtg" # Daily Message Webhook
 DAILY_MESSAGE = "This is your daily warning." # Daily Message
