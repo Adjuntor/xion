@@ -9,7 +9,9 @@ DAILY_MINUTE = 0 # Minute to send the message
 DAILY_SECOND = 0 # Second to send the message
 DAILY_MICROSECOND = 0 # Microsecond to send the message
 
-
+#RSS FEEDS
+#url of the feed 
+#webhook = url of the webhook
 RSS_FEEDS = [
     {
         "url": "https://example.com/rss",
