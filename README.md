@@ -1,3 +1,4 @@
+this is 100% AI do not use this lmao
 # How to run
 ```
 git clone https://github.com/Adjuntor/xion.git
