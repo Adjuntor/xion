@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import asyncio
 import aiohttp
 import feedparser
@@ -11,16 +12,19 @@ import config.config as config
 
 CACHE_FILE = "config/seen_articles.json"
 
+# Extra days to keep a link in the cache beyond the recency filter
+CACHE_MARGIN_DAYS = 2
+
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=10)
+
 
 class Xion:
 
     def __init__(self):
 
-        # Fast lookup
-        self.seen_links = set()
-
-        # Ordered cache for trimming
-        self.seen_order = []
+        # {normalized_link: unix timestamp when first seen}
+        # Dicts keep insertion order, so oldest entries are first.
+        self.seen = {}
 
         self._dirty = False
 
@@ -31,7 +35,7 @@ class Xion:
 
         self.load_cache()
 
-        print(f"[INIT] Loaded {len(self.seen_links)} cached links")
+        print(f"[INIT] Loaded {len(self.seen)} cached links")
 
     # =========================================================
     # CACHE
@@ -41,51 +45,102 @@ class Xion:
 
         print("[CACHE] Loading cache file...")
 
-        if os.path.exists(CACHE_FILE):
-
-            try:
-                with open(CACHE_FILE, "r") as f:
-                    links = json.load(f)
-
-                normalized = [
-                    self.normalize_link(link)
-                    for link in links
-                    if link
-                ]
-
-                # Remove duplicates while preserving order
-                deduped = list(dict.fromkeys(normalized))
-
-                self.seen_links = set(deduped)
-                self.seen_order = deduped
-
-                print(f"[CACHE] Loaded {len(self.seen_links)} seen links")
-
-            except Exception as e:
-
-                print(f"[CACHE] Failed to load cache: {e}")
-
-                self.seen_links = set()
-                self.seen_order = []
-
-        else:
+        if not os.path.exists(CACHE_FILE):
             print("[CACHE] No cache file found, starting fresh")
-
-    def save_cache(self):
-
-        trimmed_order = self.seen_order[-config.MAX_CACHE_SIZE:]
+            return
 
         try:
 
-            with open(CACHE_FILE, "w") as f:
-                json.dump(trimmed_order, f)
+            with open(CACHE_FILE, "r") as f:
+                data = json.load(f)
 
-            self.seen_order = trimmed_order
-            self.seen_links = set(trimmed_order)
+            now = time.time()
 
-            print(f"[CACHE] Saved {len(self.seen_links)} links")
+            if isinstance(data, list):
+
+                # Old format (plain list, no timestamps).
+                # Stamp everything "now"; it will age out normally.
+                print("[CACHE] Migrating old list format")
+
+                self.seen = {
+                    self.normalize_link(link): now
+                    for link in data
+                    if link
+                }
+
+                self._dirty = True
+
+            else:
+
+                self.seen = {
+                    self.normalize_link(link): float(ts)
+                    for link, ts in data.items()
+                    if link
+                }
+
+            # Drop empty keys that normalization may have produced
+            self.seen.pop("", None)
+
+            self.prune()
+
+            print(f"[CACHE] Loaded {len(self.seen)} seen links")
 
         except Exception as e:
+
+            print(f"[CACHE] Failed to load cache: {e}")
+
+            self.seen = {}
+
+    def prune(self):
+        """
+        Age-based pruning, with MAX_CACHE_SIZE as a hard safety cap.
+        Retention is longer than the recency filter so a link can never
+        leave the cache while it could still pass is_recent().
+        """
+
+        before = len(self.seen)
+
+        retention = (config.RSS_LAST_ARTICLE_RANGE + CACHE_MARGIN_DAYS) * 86400
+        cutoff = time.time() - retention
+
+        self.seen = {
+            link: ts
+            for link, ts in self.seen.items()
+            if ts >= cutoff
+        }
+
+        # Hard cap (keeps the newest entries)
+        max_size = getattr(config, "MAX_CACHE_SIZE", None)
+
+        if max_size and len(self.seen) > max_size:
+            self.seen = dict(list(self.seen.items())[-max_size:])
+
+        removed = before - len(self.seen)
+
+        if removed:
+            self._dirty = True
+            print(f"[CACHE] Pruned {removed} old links")
+
+    def save_cache(self):
+
+        self.prune()
+
+        tmp = CACHE_FILE + ".tmp"
+
+        try:
+
+            os.makedirs(os.path.dirname(CACHE_FILE) or ".", exist_ok=True)
+
+            with open(tmp, "w") as f:
+                json.dump(self.seen, f)
+
+            # Atomic replace: a crash can't leave a half-written file
+            os.replace(tmp, CACHE_FILE)
+
+            print(f"[CACHE] Saved {len(self.seen)} links")
+
+        except Exception as e:
+
             print(f"[CACHE] Failed to save cache: {e}")
 
     # =========================================================
@@ -124,7 +179,6 @@ class Xion:
             # Normalize Twitter/X links
             if netloc in ("x.com", "twitter.com"):
 
-                # Normalize weird Twitter paths
                 path = path.replace("/i/web/status/", "/status/")
 
                 netloc = "fxtwitter.com"
@@ -203,26 +257,18 @@ class Xion:
     async def is_seen(self, identifier):
 
         async with self._seen_lock:
-            return identifier in self.seen_links
+            return identifier in self.seen
 
     async def mark_seen(self, identifier):
 
         async with self._seen_lock:
 
-            if identifier in self.seen_links:
+            if identifier in self.seen:
                 return
 
-            self.seen_links.add(identifier)
-            self.seen_order.append(identifier)
+            self.seen[identifier] = time.time()
 
             self._dirty = True
-
-            # Trim oldest entries
-            while len(self.seen_order) > config.MAX_CACHE_SIZE:
-
-                oldest = self.seen_order.pop(0)
-
-                self.seen_links.discard(oldest)
 
     # =========================================================
     # FETCH FEED
@@ -241,7 +287,7 @@ class Xion:
             async with session.get(
                 feed_url,
                 headers=headers,
-                timeout=10
+                timeout=HTTP_TIMEOUT
             ) as resp:
 
                 if resp.status != 200:
@@ -254,7 +300,8 @@ class Xion:
 
                 print(f"[FETCH] Received {len(text)} bytes")
 
-                return feedparser.parse(text)
+                # feedparser is blocking; keep it off the event loop
+                return await asyncio.to_thread(feedparser.parse, text)
 
         except Exception as e:
 
@@ -291,7 +338,7 @@ class Xion:
         # Sort newest first
         entries = sorted(
             feed.entries,
-            key=lambda e: self.get_entry_date(e) or (0,),
+            key=lambda e: tuple(self.get_entry_date(e) or (0,)),
             reverse=True
         )[:20]
 
@@ -299,12 +346,7 @@ class Xion:
 
             total += 1
 
-            raw_link = entry.get("link")
-
-            if not raw_link:
-                continue
-
-            link = self.normalize_link(raw_link)
+            link = self.get_entry_identifier(entry)
 
             if not link:
                 continue
@@ -319,14 +361,9 @@ class Xion:
                 or ""
             ).strip().lower()
 
-            parsed_link = urlparse(link)
+            path_parts = urlparse(link).path.strip("/").split("/")
 
-            path_parts = parsed_link.path.strip("/").split("/")
-
-            username = (
-                path_parts[0].lower()
-                if path_parts else ""
-            )
+            username = path_parts[0].lower() if path_parts else ""
 
             if author == "undefined" or username == "undefined":
 
@@ -338,8 +375,6 @@ class Xion:
 
             # =====================================================
 
-            identifier = self.get_entry_identifier(entry)
-
             # Validate timestamp
             published = self.get_entry_date(entry)
 
@@ -349,22 +384,14 @@ class Xion:
                 continue
 
             # Check duplicate
-            already_seen = await self.is_seen(identifier)
-
-            if already_seen:
+            if await self.is_seen(link):
 
                 skipped_seen += 1
                 continue
 
             print(f"[NEW] Found new article: {link}")
 
-            results.append(
-                (
-                    webhook_url,
-                    link,
-                    identifier
-                )
-            )
+            results.append((webhook_url, link, link))
 
         print(
             f"[SUMMARY] {url} → "
@@ -381,36 +408,55 @@ class Xion:
     # SEND WEBHOOK
     # =========================================================
 
-    async def send_webhook(self, session, webhook_url, content):
+    async def send_webhook(self, session, webhook_url, content, retries=2):
 
         print(f"[SEND] Sending to webhook: {content}")
 
-        try:
+        for attempt in range(retries + 1):
 
-            async with session.post(
-                webhook_url,
-                json={"content": content},
-                timeout=10
-            ) as resp:
+            try:
 
-                if resp.status in (200, 204):
+                async with session.post(
+                    webhook_url,
+                    json={"content": content},
+                    timeout=HTTP_TIMEOUT
+                ) as resp:
 
-                    print("[SEND] Success")
+                    if resp.status in (200, 204):
 
-                    return True
+                        print("[SEND] Success")
 
-                text = await resp.text()
+                        return True
 
-                print(f"[SEND] Failed HTTP {resp.status}: {text}")
+                    # Rate limited: wait as long as the server asks
+                    if resp.status == 429 and attempt < retries:
+
+                        try:
+                            data = await resp.json()
+                            wait = float(data.get("retry_after", 1))
+                        except Exception:
+                            wait = 1.0
+
+                        print(f"[SEND] Rate limited, waiting {wait}s")
+
+                        await asyncio.sleep(wait)
+
+                        continue
+
+                    text = await resp.text()
+
+                    print(f"[SEND] Failed HTTP {resp.status}: {text}")
+
+                    return False
+
+            except Exception as e:
+
+                print(f"[ERROR] Webhook error: {e}")
 
                 return False
 
-        except Exception as e:
+        return False
 
-            print(f"[ERROR] Webhook error: {e}")
-
-            return False
-            
     # =========================================================
     # DAILY WEBHOOK SCHEDULER
     # =========================================================
@@ -467,10 +513,71 @@ class Xion:
 
                 print(f"[DAILY] Error: {e}")
 
-    
     # =========================================================
     # MAIN LOOP
     # =========================================================
+
+    async def rss_cycle(self):
+
+        async with aiohttp.ClientSession() as session:
+
+            print(f"[CYCLE] Processing {len(config.RSS_FEEDS)} feeds...")
+
+            results = await asyncio.gather(
+                *(
+                    self.process_feed(session, feed)
+                    for feed in config.RSS_FEEDS
+                ),
+                return_exceptions=True
+            )
+
+            messages = []
+            queued = set()
+
+            for feed, res in zip(config.RSS_FEEDS, results):
+
+                if isinstance(res, Exception):
+                    print(f"[ERROR] Feed {feed['url']} crashed: {res}")
+                    continue
+
+                for webhook_url, link, identifier in res:
+
+                    # Same link from two feeds in one cycle: send once
+                    if identifier in queued:
+                        continue
+
+                    queued.add(identifier)
+                    messages.append((webhook_url, link, identifier))
+
+            print(f"[CYCLE] Total new messages: {len(messages)}")
+
+            for webhook_url, link, identifier in messages:
+
+                success = await self.send_webhook(
+                    session,
+                    webhook_url,
+                    link
+                )
+
+                if success:
+
+                    await self.mark_seen(identifier)
+
+                else:
+
+                    print(f"[WARN] Failed to send: {link}")
+
+        # Expire old entries even on quiet cycles
+        self.prune()
+
+        if self._dirty:
+
+            self.save_cache()
+
+            self._dirty = False
+
+        else:
+            print("[CACHE] No changes, skipping save")
 
     async def rss_loop(self):
 
@@ -484,50 +591,12 @@ class Xion:
             print("[CYCLE] Starting new polling cycle")
             print("==============================")
 
-            async with aiohttp.ClientSession() as session:
+            try:
+                await self.rss_cycle()
 
-                print(f"[CYCLE] Processing {len(config.RSS_FEEDS)} feeds...")
-
-                tasks = [
-                    self.process_feed(session, feed)
-                    for feed in config.RSS_FEEDS
-                ]
-
-                results = await asyncio.gather(*tasks)
-
-                messages = [
-                    item
-                    for sub in results
-                    for item in sub
-                ]
-
-                print(f"[CYCLE] Total new messages: {len(messages)}")
-
-                for webhook_url, link, identifier in messages:
-
-                    success = await self.send_webhook(
-                        session,
-                        webhook_url,
-                        link
-                    )
-
-                    if success:
-
-                        await self.mark_seen(identifier)
-
-                    else:
-
-                        print(f"[WARN] Failed to send: {link}")
-
-                # Save cache after cycle
-                if self._dirty:
-
-                    self.save_cache()
-
-                    self._dirty = False
-
-                else:
-                    print("[CACHE] No changes, skipping save")
+            except Exception as e:
+                # Never let one bad cycle kill the bot
+                print(f"[ERROR] Cycle failed: {e}")
 
             elapsed = (datetime.now() - start).total_seconds()
 
